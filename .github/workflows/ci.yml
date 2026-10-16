@@ -25,14 +25,16 @@ jobs:
           --health-retries 30
 
     env:
-      DB: ${{ job.services.oracle.id }}
       UTPLSQL_VERSION: v.3.2.3
 
     steps:
       - uses: actions/checkout@v7
 
+      # o contexto "job" só pode ser lido dentro dos passos, não no env do job
       - name: copia o projeto para o contêiner do oracle
-        run: docker cp . "$DB":/tmp/projeto
+        run: |
+          echo "DB=${{ job.services.oracle.id }}" >> "$GITHUB_ENV"
+          docker cp . "${{ job.services.oracle.id }}":/tmp/projeto
 
       - name: instala o utplsql
         run: |
