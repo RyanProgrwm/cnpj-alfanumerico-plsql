@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          ORACLE_PASSWORD: oracle
+          APP_USER: app
+          APP_USER_PASSWORD: app
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd healthcheck.sh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      DB: ${{ job.services.oracle.id }}
+      UTPLSQL_VERSION: v.3.2.3
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: copia o projeto para o contêiner do oracle
+        run: docker cp . "$DB":/tmp/projeto
+
+      - name: instala o utplsql
+        run: |
+          curl -sSL -o utPLSQL.zip "https://github.com/utPLSQL/utPLSQL/releases/download/$UTPLSQL_VERSION/utPLSQL.zip"
+          unzip -q utPLSQL.zip -d ut
+          src=$(dirname "$(find ut -path '*source/install_headless.sql' | head -1)")
+          docker cp "$src" "$DB":/tmp/utplsql
+          docker exec -w /tmp/utplsql "$DB" sqlplus -s -l "sys/oracle@//localhost/FREEPDB1 as sysdba" @install_headless.sql > install.log
+          tail -5 install.log
+
+      - name: compila o pacote e os testes
+        run: |
+          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
+            sqlplus -s -l app/app@//localhost/FREEPDB1 @ci/compila.sql
+
+      - name: roda os testes
+        run: |
+          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
+            sqlplus -s -l app/app@//localhost/FREEPDB1 @ci/testes.sql | tee resultado.txt
+          if ! grep -Eq '^[0-9]+ tests?, 0 failed, 0 errored' resultado.txt; then
+            grep -E 'FAILED|ERROR|ORA-|Expected|Actual' resultado.txt | head -20 | sed 's/^/::error::/'
+            exit 1
+          fi
+
+      - name: roda os exemplos
+        run: |
+          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
+            sqlplus -s -l app/app@//localhost/FREEPDB1 @scripts/exemplos.sql < /dev/null
+
+      - name: confere os scripts de diagnóstico num legado de exemplo
+        run: |
+          run() { docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" sqlplus -s -l app/app@//localhost/FREEPDB1 "$@" < /dev/null; }
+          run @ci/legado.sql
+          run @scripts/colunas_cnpj.sql | tee colunas.txt
+          run @scripts/codigo_cnpj_numerico.sql | tee codigo.txt
+          grep -q 'CLIENTE_LEGADO.*CNPJ ' colunas.txt         || { echo "::error::coluna numérica não encontrada"; exit 1; }
+          grep -q 'CLIENTE_LEGADO.*CGC_ANTIGO' colunas.txt    || { echo "::error::coluna curta não encontrada"; exit 1; }
+          ! grep -q 'CNPJ_NOVO' colunas.txt                   || { echo "::error::coluna correta apareceu como problema"; exit 1; }
+          grep -q 'GRAVA_CLIENTE_LEGADO' codigo.txt           || { echo "::error::to_number em cnpj não encontrado"; exit 1; }
