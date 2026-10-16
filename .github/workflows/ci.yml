@@ -80,4 +80,4 @@ jobs:
           grep -q 'CLIENTE_LEGADO.*CGC_ANTIGO' colunas.txt || falha "coluna curta não encontrada"
           ! grep -q 'CNPJ_NOVO'                colunas.txt || falha "coluna correta apareceu como problema"
           grep -q 'GRAVA_CLIENTE_LEGADO'       codigo.txt  || falha "to_number em cnpj não encontrado"
-          echo "::notice::diagnóstico encontrou os 3 problemas do legado de exemplo"
+          echo "::notice title=diagnóstico encontrou os 3 problemas do legado de exemplo::$(grep -v '^[[:space:]]*$' colunas.txt codigo.txt | sed ':a;N;$!ba;s/\n/%0A/g')"
