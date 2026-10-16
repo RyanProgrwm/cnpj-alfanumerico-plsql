@@ -47,12 +47,12 @@ jobs:
           docker exec -u root "$DB" chmod -R a+rwX /tmp/utplsql /tmp/projeto
           docker exec -w /tmp/utplsql "$DB" sqlplus -s -l "sys/oracle@//localhost/FREEPDB1 as sysdba" @install_headless.sql < /dev/null > install.log 2>&1 || true
           tail -5 install.log
-          versao=$(docker exec "$DB" bash -c "echo 'set heading off feedback off pagesize 0
-          select ut.version() from dual;' | sqlplus -s -l $APP" | tr -d '[:space:]')
-          case "$versao" in
-            v3*) echo "::notice::utPLSQL $versao instalado" ;;
-            *) echo "::error title=utPLSQL não instalou::$(tail -30 install.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1 ;;
-          esac
+          if versao=$(bash ci/sql.sh "$APP" @ci/versao_ut.sql | grep -o 'UTPLSQL=.*'); then
+            echo "::notice::${versao#UTPLSQL=} instalado"
+          else
+            echo "::error title=utPLSQL não instalou::$(grep -v '^[[:space:]]*$' install.log | grep -v 'created\.' | tail -30 | sed ':a;N;$!ba;s/\n/%0A/g')"
+            exit 1
+          fi
 
       - name: compila o pacote e os testes
         run: bash ci/sql.sh "$APP" @ci/compila.sql
