@@ -43,6 +43,8 @@ jobs:
           unzip -q utPLSQL.zip -d ut
           src=$(dirname "$(find ut -path '*source/install_headless.sql' | head -1)")
           docker cp "$src" "$DB":/tmp/utplsql
+          # o instalador grava arquivos temporários na própria pasta; o docker cp deixa o dono errado
+          docker exec -u root "$DB" chmod -R a+rwX /tmp/utplsql /tmp/projeto
           docker exec -w /tmp/utplsql "$DB" sqlplus -s -l "sys/oracle@//localhost/FREEPDB1 as sysdba" @install_headless.sql < /dev/null > install.log 2>&1 || true
           tail -5 install.log
           versao=$(docker exec "$DB" bash -c "echo 'set heading off feedback off pagesize 0
