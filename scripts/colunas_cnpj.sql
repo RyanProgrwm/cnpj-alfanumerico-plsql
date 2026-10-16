@@ -2,13 +2,13 @@
 -- tipo numérico (não aceita letra) ou texto com menos de 14 posições.
 -- procura também por "cgc", nome antigo do cnpj que ainda aparece em sistemas legados.
 -- inclui views. só lê o dicionário; não altera nada.
-set linesize 250
+set linesize 260
 set pagesize 200
 column owner format a20
 column table_name format a30
 column column_name format a30
 column tipo format a20
-column problema format a45
+column problema format a50
 
 select c.owner,
        c.table_name,
