@@ -26,6 +26,7 @@ jobs:
 
     env:
       UTPLSQL_VERSION: v.3.2.3
+      APP: app/app@//localhost/FREEPDB1
 
     steps:
       - uses: actions/checkout@v7
@@ -42,35 +43,39 @@ jobs:
           unzip -q utPLSQL.zip -d ut
           src=$(dirname "$(find ut -path '*source/install_headless.sql' | head -1)")
           docker cp "$src" "$DB":/tmp/utplsql
-          docker exec -w /tmp/utplsql "$DB" sqlplus -s -l "sys/oracle@//localhost/FREEPDB1 as sysdba" @install_headless.sql > install.log
+          docker exec -w /tmp/utplsql "$DB" sqlplus -s -l "sys/oracle@//localhost/FREEPDB1 as sysdba" @install_headless.sql < /dev/null > install.log 2>&1 || true
           tail -5 install.log
+          versao=$(docker exec "$DB" bash -c "echo 'set heading off feedback off pagesize 0
+          select ut.version() from dual;' | sqlplus -s -l $APP" | tr -d '[:space:]')
+          case "$versao" in
+            v3*) echo "::notice::utPLSQL $versao instalado" ;;
+            *) echo "::error title=utPLSQL não instalou::$(tail -30 install.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1 ;;
+          esac
 
       - name: compila o pacote e os testes
-        run: |
-          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
-            sqlplus -s -l app/app@//localhost/FREEPDB1 @ci/compila.sql
+        run: bash ci/sql.sh "$APP" @ci/compila.sql
 
       - name: roda os testes
         run: |
-          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
-            sqlplus -s -l app/app@//localhost/FREEPDB1 @ci/testes.sql | tee resultado.txt
+          bash ci/sql.sh "$APP" @ci/testes.sql | tee resultado.txt
+          resumo=$(grep -E '^[0-9]+ tests?, ' resultado.txt | tail -1)
+          echo "::notice::$resumo"
           if ! grep -Eq '^[0-9]+ tests?, 0 failed, 0 errored' resultado.txt; then
-            grep -E 'FAILED|ERROR|ORA-|Expected|Actual' resultado.txt | head -20 | sed 's/^/::error::/'
+            echo "::error title=testes falharam::$(grep -v '^[[:space:]]*$' resultado.txt | tail -40 | sed ':a;N;$!ba;s/\n/%0A/g')"
             exit 1
           fi
 
       - name: roda os exemplos
-        run: |
-          docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" \
-            sqlplus -s -l app/app@//localhost/FREEPDB1 @scripts/exemplos.sql < /dev/null
+        run: bash ci/sql.sh "$APP" @scripts/exemplos.sql
 
       - name: confere os scripts de diagnóstico num legado de exemplo
         run: |
-          run() { docker exec -e NLS_LANG=AMERICAN_AMERICA.AL32UTF8 -w /tmp/projeto "$DB" sqlplus -s -l app/app@//localhost/FREEPDB1 "$@" < /dev/null; }
-          run @ci/legado.sql
-          run @scripts/colunas_cnpj.sql | tee colunas.txt
-          run @scripts/codigo_cnpj_numerico.sql | tee codigo.txt
-          grep -q 'CLIENTE_LEGADO.*CNPJ ' colunas.txt         || { echo "::error::coluna numérica não encontrada"; exit 1; }
-          grep -q 'CLIENTE_LEGADO.*CGC_ANTIGO' colunas.txt    || { echo "::error::coluna curta não encontrada"; exit 1; }
-          ! grep -q 'CNPJ_NOVO' colunas.txt                   || { echo "::error::coluna correta apareceu como problema"; exit 1; }
-          grep -q 'GRAVA_CLIENTE_LEGADO' codigo.txt           || { echo "::error::to_number em cnpj não encontrado"; exit 1; }
+          bash ci/sql.sh "$APP" @ci/legado.sql
+          bash ci/sql.sh "$APP" @scripts/colunas_cnpj.sql | tee colunas.txt
+          bash ci/sql.sh "$APP" @scripts/codigo_cnpj_numerico.sql | tee codigo.txt
+          falha() { echo "::error title=diagnóstico::$1%0A$(sed ':a;N;$!ba;s/\n/%0A/g' colunas.txt codigo.txt)"; exit 1; }
+          grep -q 'CLIENTE_LEGADO.*CNPJ '      colunas.txt || falha "coluna numérica não encontrada"
+          grep -q 'CLIENTE_LEGADO.*CGC_ANTIGO' colunas.txt || falha "coluna curta não encontrada"
+          ! grep -q 'CNPJ_NOVO'                colunas.txt || falha "coluna correta apareceu como problema"
+          grep -q 'GRAVA_CLIENTE_LEGADO'       codigo.txt  || falha "to_number em cnpj não encontrado"
+          echo "::notice::diagnóstico encontrou os 3 problemas do legado de exemplo"
